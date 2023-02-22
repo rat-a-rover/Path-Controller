@@ -41,12 +41,13 @@ class SimpleTracker(Node):
         self.O_cum_error = 0
         self.y_cum_error = 0
         self.ang_vel = 0.0
+        self.event = "STOP"
         self.node = rclpy.create_node('simple_tracker_node')
         # if self.TESTING:
         self.y_publisher = self.node.create_publisher(Command, '/planner/command', 10)
         timer_period = 0.1  # seconds
         self.timer = self.create_timer(timer_period, self.periodic)        
-        self.exp_subscription = self.create_subscription(Command,'/planner/command',self.experiment_callback,10) #both topics are same, how to handle?
+        self.exp_subscription = self.create_subscription(Experiment,'/experiment',self.experiment_callback,10) #both topics are same, how to handle?
         self.localization_subscription = self.create_subscription(Odometry,'/localization_data' ,self.localization_callback,10)
         self.base_link_wrt_cam = np.array([ 0, -1, 0, 0,
                                            0, 0, -1, 0,
@@ -90,8 +91,9 @@ class SimpleTracker(Node):
     def experiment_callback(self,msg1):
         
         self.time = self.get_clock().now()
-        if msg1.id != 0 and msg1.event == 'START' :
-
+        
+        if  msg1.cmd.event == 'START' :
+            self.event = 'START'
             print("In experiment call back")
             self.TESTING = True
 
@@ -102,9 +104,9 @@ class SimpleTracker(Node):
         
             self.mparams = {}
             self.mtime = 0
-            if msg1.type == "turn" :
+            if msg1.cmd.type == "turn" :
                 self.mparams['type'] = "turn" 
-                for name, value in dict(zip(msg1.param_names, msg1.param_values)).items():
+                for name, value in dict(zip(msg1.cmd.param_names, msg1.cmd.param_values)).items():
                         if name != "side" :
                             self.mparams[name] = float(value)
                         else:
@@ -114,9 +116,9 @@ class SimpleTracker(Node):
                 else:
                     mult = 1
                 self.ang_vel= self.mparams['velocity'] / self.mparams['distance'] * mult
-            elif msg1.type == "spot":
+            elif msg1.cmd.type == "spot":
                 self.mparams['type'] = "spot" 
-                for name, value in dict(zip(msg1.param_names, msg1.param_values)).items():
+                for name, value in dict(zip(msg1.cmd.param_names, msg1.cmd.param_values)).items():
                         if name != "side" :
                             self.mparams[name] = float(value)
                         else:
@@ -124,9 +126,9 @@ class SimpleTracker(Node):
                 self.mparams['distance'] = 0.0
                 self.mparams['side'] = 'center'
                 self.mparams['heading'] = 0.0
-            elif msg1.type == "straight":
+            elif msg1.cmd.type == "straight":
                 self.mparams['type'] = "straight" 
-                for name, value in dict(zip(msg1.param_names, msg1.param_values)).items():
+                for name, value in dict(zip(msg1.cmd.param_names, msg1.cmd.param_values)).items():
                         if name != "side" :
                             self.mparams[name] = float(value)
                         else:
@@ -134,21 +136,41 @@ class SimpleTracker(Node):
                 self.mparams['distance'] = 1000000.0
                 self.mparams['heading'] = 0.0
                 self.mparams['side'] = 'left'
-            elif msg1.type == "crab":
+            elif msg1.cmd.type == "crab":
                 self.mparams['type'] = "crab" 
-                for name, value in dict(zip(msg1.param_names, msg1.param_values)).items():
+                for name, value in dict(zip(msg1.cmd.param_names, msg1.cmd.param_values)).items():
                         if name != "side" :
                             self.mparams[name] = float(value)
                         else:
                             self.mparams[name] = (value)
                 self.mparams['distance'] = 1000000.0
                 self.mparams['side'] = 'left'   #check if side is fixed   
-            # self.get_logger().info("model created")  
-            # print(self.mparams)
+            self.get_logger().info("model created")  
+            print(self.mparams)
             self.models = model(self.mtime ,self.mparams)
-            
+
+
+        elif  msg1.cmd.event == 'STOP' :
+
+            print("In experiment stop call back")
+            self.TESTING = True
+            self.event = 'STOP'
+            self.o_posx = self.a_posx
+            self.o_posy = self.a_posy
+            self.o_posz  = self.a_posz
+            self.o_ori  =  self.yaw #orientation  #verify orientation
+        
+            self.mparams = {}
+            self.mtime = 0
+            self.mparams['type'] = 'straight'
+            self.mparams['distance'] = 100000
+            self.mparams['heading'] = 0.0
+            self.mparams['velocity'] = 0.0
+            self.mparams['side'] = 0.0
+            print(self.mparams)
+            self.models = model(self.mtime ,self.mparams)
             # self.get_logger().info("model created") 
-            #create the model
+            
 
     def localization_callback(self,msg):
         position = msg.pose.pose.position
@@ -178,11 +200,11 @@ class SimpleTracker(Node):
         list2 = [[msg.twist.twist.linear.x ],[msg.twist.twist.linear.y],[msg.twist.twist.linear.z],[1]]
         # print("Velocity In localization data: ",list2 )
         # print(self.rotation)
-        # print(np.array(list2).shape)
+        
         self.velocity_rover_frame =  np.linalg.inv(self.rotation)@np.array(list2)
         # print("Velocity In lrover frame vector: ",self.velocity_rover_frame )
         self.vel = np.linalg.norm(self.velocity_rover_frame[0:2]) #how to handle sign
-        # print("Velocity In rover frame data: ",self.vel )
+        
     
     def reset(self):
         if self.TESTING:
@@ -221,7 +243,7 @@ class SimpleTracker(Node):
         self.gains['kpy'] = 0.1
         self.gains['kiy'] = 0.003 
         omega = -(self.gains['kpO'] * O_error + self.gains['kiO'] * self.O_cum_error)
-        print("omega ==",omega)
+        # print("omega ==",omega)
         omegafb = self.limit(omega, 'w')
        
         
@@ -230,20 +252,19 @@ class SimpleTracker(Node):
         y_dot = (self.gains['kpy'] * y_error + self.gains['kiy'] * self.y_cum_error) * (-1 if x_dot > 0 else 1)
         if y_dot < 0.01 :
             y_dot = 0.0
-        print("y_dot ==",y_dot)
-        print("x_dot ==",x_dot)
+        # print("y_dot ==",y_dot)
+        # print("x_dot ==",x_dot)
         # Calculate corrective heading from lateral controller and invoke limit
         heading = math.atan2(y_dot, abs(x_dot))
         headingfb = self.limit(heading, 'h') 
-        print("heading ==",headingfb)
+        # print("heading ==",headingfb)
         # Calculate radius, angle, lin_vel, side feedback parameters
         radiusfb, anglefb, velocity, sidefb = self.vel_to_traj(x_dot, self.ang_vel+omegafb, headingfb)
         velocityfb = self.limit(velocity, 'v') 
         return radiusfb, anglefb, velocityfb, sidefb, omegafb, headingfb, y_dot
         
     def periodic(self):
-        # if not data['status']['traj_set']:
-        #     return
+        
 
         if self.TESTING:
             self.start = self.get_clock().now()# check if you need in seconds or nanoseconds
@@ -251,14 +272,10 @@ class SimpleTracker(Node):
         else :
             return
         
-        #t = rospy.get_rostime().to_sec() - data['time']['to'] # Change to ROS2 API
+        
         t = self.start- self.time    ####(calculate the time elapsed)
 
-        # xa = data['pose']['relative']['x'] 
-        # ya = data['pose']['relative']['y']
-        # Oa = data['pose']['relative']['O']
-        # va = data['odometry']['v']
-        # alpha = data['trajectory']['derived']['heading'] 
+
 
 
         xa = self.rel_x
@@ -270,7 +287,7 @@ class SimpleTracker(Node):
         # _, _, _, _,\
         xp, yp, Op = model(self.mtime,self.mparams)(t, xa, ya, Oa, va)
         
-        # self.models.
+        
 
         crab_rotation = np.array([
             [np.cos(-alpha), -np.sin(-alpha)],
@@ -282,8 +299,8 @@ class SimpleTracker(Node):
         actual_straight = np.matmul(crab_rotation , actual)
         _, yar = actual_straight[0], actual_straight[1]
         _, ypr = proj_straight[0], proj_straight[1]
-        print('projected points',proj_straight, actual_straight)
-        print('projected orientation Oa , Op',Oa, Op)
+        # print('projected points',proj_straight, actual_straight)
+        # print('projected orientation Oa , Op',Oa, Op)
         O_error = Oa - Op
 
         y_error = yar - ypr
@@ -296,14 +313,8 @@ class SimpleTracker(Node):
                     O_error,
                     (self.mparams['velocity']),
                     self.mparams['heading']
-                )   #velocity and angle ?
+                )   
 
-            # if not self.TESTING or (self.TESTING and self.enable):
-            #     self.publish_tracker_data(arc_apply,
-            #                             radiusfb,
-            #                             anglefb,
-            #                             velocityfb,
-            #                             sidefb, data, commands)
         else:
             # simple tracker does not control for point turning since there
             # is little to no side slip
@@ -333,7 +344,7 @@ class SimpleTracker(Node):
             msg.id = 0
             msg.start = float(0.0)
             msg.timeout = float(5) #what will be the timeout
-            msg.event = 'START' 
+            msg.event = self.event 
             msg.targets =["mobility_base"]  #change this
             msg.type ="turn"
             msg.param_names = ["distance","velocity","side","heading"]
