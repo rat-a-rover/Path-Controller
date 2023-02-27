@@ -246,5 +246,5 @@ PROJECT = {
     'turn'      :      arc_project,
     'straight' : straight_project,
     'crab'     :     crab_project,
-    'point'    :    point_project,
+    'spot'    :    point_project,
 }

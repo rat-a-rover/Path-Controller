@@ -28,8 +28,8 @@ class SimpleTracker(Node):
         # )
         # self.TESTING = testing
         super().__init__('SimpleTracker')
-        self.TESTING = False
-        self.a_posx,self.a_posy,self.a_posz = 0,0,0
+        self.TESTING = True
+        self.a_posx,self.a_posy,self.a_posz,self.yaw = 0,0,0,0
         self.rel_x = 0
         self.rel_y = 0
         self.rel_z = 0
@@ -43,6 +43,7 @@ class SimpleTracker(Node):
         self.ang_vel = 0.0
         self.event = "STOP"
         self.node = rclpy.create_node('simple_tracker_node')
+        self.LOC_READY = False
         # if self.TESTING:
         self.y_publisher = self.node.create_publisher(Command, '/planner/command', 10)
         timer_period = 0.1  # seconds
@@ -94,13 +95,8 @@ class SimpleTracker(Node):
         
         if  msg1.cmd.event == 'START' :
             self.event = 'START'
-            print("In experiment call back")
+            self.get_logger().info("In experiment call back, start")
             self.TESTING = True
-
-            self.o_posx = self.a_posx
-            self.o_posy = self.a_posy
-            self.o_posz  = self.a_posz
-            self.o_ori  =  self.yaw #orientation  #verify orientation
         
             self.mparams = {}
             self.mtime = 0
@@ -152,7 +148,7 @@ class SimpleTracker(Node):
 
         elif  msg1.cmd.event == 'STOP' :
 
-            print("In experiment stop call back")
+            self.get_logger().info("In experiment call back, stop")
             self.TESTING = True
             self.event = 'STOP'
             self.o_posx = self.a_posx
@@ -175,15 +171,27 @@ class SimpleTracker(Node):
     def localization_callback(self,msg):
         position = msg.pose.pose.position
         orientation = msg.pose.pose.orientation
+        list2 = [[msg.twist.twist.linear.x ],[msg.twist.twist.linear.y],[msg.twist.twist.linear.z],[1]]
         (self.a_posx,self.a_posy,self.a_posz) = (position.x, position.y, position.z)
         quat = [orientation.x, orientation.y, orientation.z, orientation.w]
         self.roll, self.pitch, self.yaw = euler_from_quaternion(quat)
         self.yaw = abs(self.yaw)
+        self.velocity_rover_frame =  np.linalg.inv(self.rotation)@np.array(list2)
+        # print("Velocity In lrover frame vector: ",self.velocity_rover_frame )
+        self.vel = np.linalg.norm(self.velocity_rover_frame[0:2]) #how to handle sign
         # print("yaw =" , self.yaw)
         # print("o_yaw =" , self.o_ori)
         # print("In localization data: ",position.x, position.y, position.z,self.roll, self.pitch, self.yaw )
         self.rotation = euler_matrix(np.degrees(self.pitch), np.degrees(self.yaw),
-                            np.degrees(self.roll))        
+                            np.degrees(self.roll))
+
+        # Initialize start position on reception of first localization message
+        if not self.LOC_READY:
+            self.o_posx = self.a_posx
+            self.o_posy = self.a_posy
+            self.o_posz = self.a_posz
+            self.o_ori  = self.yaw #orientation  #verify orientation
+            self.LOC_READY = True
 
         current_time = msg.header.stamp.sec + msg.header.stamp.nanosec*(10**-9)  #incase velocity is not given
         self.relative_roll, self.relative_pitch, self.relative_yaw = euler_from_matrix(self.rotation)
@@ -197,13 +205,9 @@ class SimpleTracker(Node):
         # print("Relative Orientation = ",self.rel_ori)
         # print("In localization data Relative Data: ",self.rel_x, self.rel_y, self.rel_z,self.rel_ori)
         # self.vel_x = np.linalg.inv(self.rotation)*msg.twist.twist.linear.x 
-        list2 = [[msg.twist.twist.linear.x ],[msg.twist.twist.linear.y],[msg.twist.twist.linear.z],[1]]
+        
         # print("Velocity In localization data: ",list2 )
         # print(self.rotation)
-        
-        self.velocity_rover_frame =  np.linalg.inv(self.rotation)@np.array(list2)
-        # print("Velocity In lrover frame vector: ",self.velocity_rover_frame )
-        self.vel = np.linalg.norm(self.velocity_rover_frame[0:2]) #how to handle sign
         
     
     def reset(self):
@@ -266,7 +270,7 @@ class SimpleTracker(Node):
     def periodic(self):
         
 
-        if self.TESTING:
+        if self.TESTING and self.LOC_READY:
             self.start = self.get_clock().now()# check if you need in seconds or nanoseconds
 
         else :
@@ -330,16 +334,17 @@ class SimpleTracker(Node):
         self.y_cum_error += y_error
 
         if self.TESTING:
-            # print('    CONTROLLER ', 'ENABLED ' if self.enable else 'DISABLED ', self.ctr)
-            # print('    xp: ', xp, 'yp: ', yp, 'Op: ', Op)
-            # print('    xa: ', xa, 'ya: ', ya, 'Oa: ', Oa)
-            # # print('    xg: ', data['pose']['rel_goal']['x'], 'yg: ', data['pose']['rel_goal']['y'], 'Og: ', data['pose']['rel_goal']['O'])
-            # print('    O_error: ', O_error, 'y_error', y_error)
-            # print('    O_cum_error: ', self.O_cum_error, 'y_cum_error', self.y_cum_error)
-            # print('    omegafb: ', omegafb, 'headingfb: ', headingfb, 'y_dot: ', y_dot)
-            # print('    radiusfb: ', radiusfb, 'anglefb: ', anglefb,
-            #       '    velocityfb: ', velocityfb, 'sidefb: ', sidefb)
-            # print('    Loop Time: ', (Clock().now().seconds - start).to_sec())
+            log = self.get_logger()
+            log.info('    CONTROLLER ', 'ENABLED ' if self.enable else 'DISABLED ', self.ctr)
+            log.info('    xp: ', xp, 'yp: ', yp, 'Op: ', Op)
+            log.info('    xa: ', xa, 'ya: ', ya, 'Oa: ', Oa)
+            # print('    xg: ', data['pose']['rel_goal']['x'], 'yg: ', data['pose']['rel_goal']['y'], 'Og: ', data['pose']['rel_goal']['O'])
+            log.info('    O_error: ', O_error, 'y_error', y_error)
+            log.info('    O_cum_error: ', self.O_cum_error, 'y_cum_error', self.y_cum_error)
+            log.info('    omegafb: ', omegafb, 'headingfb: ', headingfb, 'y_dot: ', y_dot)
+            log.info('    radiusfb: ', radiusfb, 'anglefb: ', anglefb,
+                  '    velocityfb: ', velocityfb, 'sidefb: ', sidefb)
+            # log.info('    Loop Time: ', (Clock().now().seconds - start).to_sec())
             msg = Command()
             msg.id = 0
             msg.start = float(0.0)
