@@ -132,7 +132,9 @@ class SimpleTracker(Node):
             elif msg1.cmd.type == "straight":
                 self.mparams['type'] = "straight" 
                 for name, value in dict(zip(msg1.cmd.param_names, msg1.cmd.param_values)).items():
-                        if name != "side" :
+                        if name == 'yaw_error':
+                            self.o_ori -= float(value)
+                        elif name != "side" :
                             self.mparams[name] = float(value)
                         else:
                             self.mparams[name] = (value)
