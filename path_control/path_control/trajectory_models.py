@@ -239,7 +239,7 @@ LOCATE = {
     'turn'      :      arc_locate,
     'straight' : straight_locate,
     'crab'     :     crab_locate,
-    'point'    :    point_locate,
+    'spot'    :    point_locate,
 }
 
 PROJECT = {

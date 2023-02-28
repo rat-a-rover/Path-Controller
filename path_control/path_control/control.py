@@ -10,6 +10,7 @@ from rclpy.node import Node
 from rover_msgs.msg import Command
 from rover_msgs.msg import Experiment
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import PoseStamped
 from path_control.trajectory_models import *
 from tf_transformations import euler_from_quaternion, quaternion_from_euler, euler_matrix, quaternion_from_matrix, euler_from_matrix
 # from pylot.utils import Location, Pose, Rotation, Transform
@@ -28,7 +29,7 @@ class SimpleTracker(Node):
         # )
         # self.TESTING = testing
         super().__init__('SimpleTracker')
-        self.TESTING = True
+        self.TESTING = False
         self.a_posx,self.a_posy,self.a_posz,self.yaw = 0,0,0,0
         self.rel_x = 0
         self.rel_y = 0
@@ -50,6 +51,7 @@ class SimpleTracker(Node):
         self.timer = self.create_timer(timer_period, self.periodic)        
         self.exp_subscription = self.create_subscription(Experiment,'/experiment',self.experiment_callback,10) #both topics are same, how to handle?
         self.localization_subscription = self.create_subscription(Odometry,'/localization_data' ,self.localization_callback,10)
+        self.pose_subscription = self.create_subscription(PoseStamped, '/ros2_aruco/pose_filtered', self.pose_callback, 10)
         self.base_link_wrt_cam = np.array([ 0, -1, 0, 0,
                                            0, 0, -1, 0,
                                            1, 0, 0, 0,
@@ -98,6 +100,11 @@ class SimpleTracker(Node):
             self.get_logger().info("In experiment call back, start")
             self.TESTING = True
         
+            self.o_posx = self.a_posx
+            self.o_posy = self.a_posy
+            self.o_posz = self.a_posz
+            self.o_ori  = self.yaw #orientation  #verify orientation
+
             self.mparams = {}
             self.mtime = 0
             if msg1.cmd.type == "turn" :
@@ -167,30 +174,35 @@ class SimpleTracker(Node):
             self.models = model(self.mtime ,self.mparams)
             # self.get_logger().info("model created") 
             
-
-    def localization_callback(self,msg):
-        position = msg.pose.pose.position
-        orientation = msg.pose.pose.orientation
-        list2 = [[msg.twist.twist.linear.x ],[msg.twist.twist.linear.y],[msg.twist.twist.linear.z],[1]]
+    def pose_callback(self, msg):
+        position = msg.pose.position
+        orientation = msg.pose.orientation
         (self.a_posx,self.a_posy,self.a_posz) = (position.x, position.y, position.z)
         quat = [orientation.x, orientation.y, orientation.z, orientation.w]
         self.roll, self.pitch, self.yaw = euler_from_quaternion(quat)
-        self.yaw = abs(self.yaw)
-        self.velocity_rover_frame =  np.linalg.inv(self.rotation)@np.array(list2)
-        # print("Velocity In lrover frame vector: ",self.velocity_rover_frame )
-        self.vel = np.linalg.norm(self.velocity_rover_frame[0:2]) #how to handle sign
+        # self.yaw = abs(self.yaw)
+        self.yaw = self.yaw + 3.14159
+        self.get_logger().debug(f'In localization data: {position.x}, {position.y}, {position.z}, {self.roll}, {self.pitch}, {self.yaw}')
+
+    def localization_callback(self,msg):
+        # position = msg.pose.pose.position
+        # orientation = msg.pose.pose.orientation
+        list2 = [[msg.twist.twist.linear.x ],[msg.twist.twist.linear.y],[msg.twist.twist.linear.z],[1]]
+        # (self.a_posx,self.a_posy,self.a_posz) = (position.x, position.y, position.z)
+        # quat = [orientation.x, orientation.y, orientation.z, orientation.w]
+        # self.roll, self.pitch, self.yaw = euler_from_quaternion(quat)
+        # self.yaw = abs(self.yaw)
         # print("yaw =" , self.yaw)
         # print("o_yaw =" , self.o_ori)
         # print("In localization data: ",position.x, position.y, position.z,self.roll, self.pitch, self.yaw )
         self.rotation = euler_matrix(np.degrees(self.pitch), np.degrees(self.yaw),
                             np.degrees(self.roll))
+        self.velocity_rover_frame =  np.linalg.inv(self.rotation)@np.array(list2)
+        # print("Velocity In lrover frame vector: ",self.velocity_rover_frame )
+        self.vel = np.linalg.norm(self.velocity_rover_frame[0:2]) #how to handle sign
 
         # Initialize start position on reception of first localization message
         if not self.LOC_READY:
-            self.o_posx = self.a_posx
-            self.o_posy = self.a_posy
-            self.o_posz = self.a_posz
-            self.o_ori  = self.yaw #orientation  #verify orientation
             self.LOC_READY = True
 
         current_time = msg.header.stamp.sec + msg.header.stamp.nanosec*(10**-9)  #incase velocity is not given
@@ -310,7 +322,7 @@ class SimpleTracker(Node):
         y_error = yar - ypr
         # y_error = ya - yp
 
-        if self.mparams['type'] != 'point':
+        if self.mparams['type'] != 'spot':
             radiusfb, anglefb, velocityfb, sidefb, omegafb, headingfb, y_dot = \
                 self.apply_PI_control(
                     y_error,
@@ -318,40 +330,41 @@ class SimpleTracker(Node):
                     (self.mparams['velocity']),
                     self.mparams['heading']
                 )   
-
+            cmd_type = 'turn'
         else:
             # simple tracker does not control for point turning since there
             # is little to no side slip
             radiusfb = self.mparams['distance']
             anglefb = self.mparams['heading']
-            velocityfb = 0
+            velocityfb = self.mparams['velocity']
             sidefb = self.mparams['side']
             omegafb = self.mparams['velocity']
             headingfb = self.mparams['heading']
+            cmd_type = 'spot'
             y_dot = 0
 
         self.O_cum_error += O_error
         self.y_cum_error += y_error
 
         if self.TESTING:
-            log = self.get_logger()
-            log.info('    CONTROLLER ', 'ENABLED ' if self.enable else 'DISABLED ', self.ctr)
-            log.info('    xp: ', xp, 'yp: ', yp, 'Op: ', Op)
-            log.info('    xa: ', xa, 'ya: ', ya, 'Oa: ', Oa)
-            # print('    xg: ', data['pose']['rel_goal']['x'], 'yg: ', data['pose']['rel_goal']['y'], 'Og: ', data['pose']['rel_goal']['O'])
-            log.info('    O_error: ', O_error, 'y_error', y_error)
-            log.info('    O_cum_error: ', self.O_cum_error, 'y_cum_error', self.y_cum_error)
-            log.info('    omegafb: ', omegafb, 'headingfb: ', headingfb, 'y_dot: ', y_dot)
-            log.info('    radiusfb: ', radiusfb, 'anglefb: ', anglefb,
-                  '    velocityfb: ', velocityfb, 'sidefb: ', sidefb)
-            # log.info('    Loop Time: ', (Clock().now().seconds - start).to_sec())
+            # log = self.get_logger()
+            # log.info('    CONTROLLER ', 'ENABLED ' if self.enable else 'DISABLED ', self.ctr)
+            # log.info('    xp: ', xp, 'yp: ', yp, 'Op: ', Op)
+            # log.info('    xa: ', xa, 'ya: ', ya, 'Oa: ', Oa)
+            # # print('    xg: ', data['pose']['rel_goal']['x'], 'yg: ', data['pose']['rel_goal']['y'], 'Og: ', data['pose']['rel_goal']['O'])
+            # log.info('    O_error: ', O_error, 'y_error', y_error)
+            # log.info('    O_cum_error: ', self.O_cum_error, 'y_cum_error', self.y_cum_error)
+            # log.info('    omegafb: ', omegafb, 'headingfb: ', headingfb, 'y_dot: ', y_dot)
+            # log.info('    radiusfb: ', radiusfb, 'anglefb: ', anglefb,
+            #       '    velocityfb: ', velocityfb, 'sidefb: ', sidefb)
+            # # log.info('    Loop Time: ', (Clock().now().seconds - start).to_sec())
             msg = Command()
             msg.id = 0
             msg.start = float(0.0)
             msg.timeout = float(5) #what will be the timeout
             msg.event = self.event 
             msg.targets =["mobility_base"]  #change this
-            msg.type ="turn"
+            msg.type =cmd_type
             msg.param_names = ["distance","velocity","side","heading"]
             msg.param_values = [str(radiusfb),str(velocityfb),str(sidefb),str(anglefb)]
             self.y_publisher.publish(msg)
