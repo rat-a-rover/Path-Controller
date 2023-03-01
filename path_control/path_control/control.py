@@ -30,7 +30,7 @@ class SimpleTracker(Node):
         # self.TESTING = testing
         super().__init__('SimpleTracker')
         self.TESTING = False
-        self.a_posx,self.a_posy,self.a_posz,self.yaw = 0,0,0,0
+        self.a_posx,self.a_posy,self.a_posz,self.roll,self.pitch,self.yaw = 0.0,0.0,0.0,0.0,0.0,0.0
         self.rel_x = 0
         self.rel_y = 0
         self.rel_z = 0
@@ -132,7 +132,7 @@ class SimpleTracker(Node):
             elif msg1.cmd.type == "straight":
                 self.mparams['type'] = "straight" 
                 for name, value in dict(zip(msg1.cmd.param_names, msg1.cmd.param_values)).items():
-                        if name == 'yaw_error':
+                        if name == "yaw_error" :
                             self.o_ori -= float(value)
                         elif name != "side" :
                             self.mparams[name] = float(value)
@@ -183,7 +183,7 @@ class SimpleTracker(Node):
         quat = [orientation.x, orientation.y, orientation.z, orientation.w]
         self.roll, self.pitch, self.yaw = euler_from_quaternion(quat)
         # self.yaw = abs(self.yaw)
-        self.yaw = self.yaw + 3.14159
+        # self.yaw = self.yaw + 3.14159
         self.get_logger().debug(f'In localization data: {position.x}, {position.y}, {position.z}, {self.roll}, {self.pitch}, {self.yaw}')
 
     def localization_callback(self,msg):
