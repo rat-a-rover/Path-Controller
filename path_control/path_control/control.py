@@ -7,7 +7,7 @@ from std_msgs.msg import Float64MultiArray
 # from operation_modules.trajectories import arc_apply, vel_to_traj
 from rclpy.clock import Clock
 from rclpy.node import Node
-from rover_msgs.msg import Command
+from rover_msgs.msg import Command, SimpleStatus
 from rover_msgs.msg import Experiment
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped
@@ -56,6 +56,8 @@ class SimpleTracker(Node):
                                            0, 0, -1, 0,
                                            1, 0, 0, 0,
                                            0, 0, 0, 1    ]).reshape(4, 4)
+        self.debug_pub = self.create_publisher(SimpleStatus, '/tracker/debug', 10)
+        self.limits = {'h': 0.524, 'w': 0.2, 'v': 0.1}
     
     def model_creation(self,msg1):
 
@@ -182,7 +184,7 @@ class SimpleTracker(Node):
         (self.a_posx,self.a_posy,self.a_posz) = (position.x, position.y, position.z)
         quat = [orientation.x, orientation.y, orientation.z, orientation.w]
         self.roll, self.pitch, self.yaw = euler_from_quaternion(quat)
-        # self.yaw = abs(self.yaw)
+        self.yaw = abs(self.yaw)
         # self.yaw = self.yaw + 3.14159
         self.get_logger().debug(f'In localization data: {position.x}, {position.y}, {position.z}, {self.roll}, {self.pitch}, {self.yaw}')
 
@@ -204,8 +206,6 @@ class SimpleTracker(Node):
         self.vel = np.linalg.norm(self.velocity_rover_frame[0:2]) #how to handle sign
 
         # Initialize start position on reception of first localization message
-        if not self.LOC_READY:
-            self.LOC_READY = True
 
         current_time = msg.header.stamp.sec + msg.header.stamp.nanosec*(10**-9)  #incase velocity is not given
         self.relative_roll, self.relative_pitch, self.relative_yaw = euler_from_matrix(self.rotation)
@@ -214,6 +214,9 @@ class SimpleTracker(Node):
         self.rel_z = self.o_posz- self.a_posz
         self.rel_ori   = self.o_ori-self.yaw #verify this based on how orientation(yaw) is given (transform)
         self.rel_ori = (self.rel_ori)
+
+        if not self.LOC_READY:
+            self.LOC_READY = True
         # print("Origin \n",self.o_posx, self.o_posy, self.o_posz, self.o_ori)
         
         # print("Relative Orientation = ",self.rel_ori)
@@ -246,20 +249,20 @@ class SimpleTracker(Node):
         return 
 
     def limit(self, value, key):
-        # return value if abs(value) < self.limits[key]\
-        #        else self.limits[key] * (1 if value > 0 else -1)
+        return value if abs(value) < self.limits[key]\
+               else self.limits[key] * (1 if value > 0 else -1)
 
         # Get the limits
-        return value
+        # return value
 
     def apply_PI_control(self, y_error, O_error, x_dot, angle):
         # PI controller for orientation drift error
 
         # Find the limits
-        self.gains['kpO'] = 0.01
+        self.gains['kpO'] = 0.05
         self.gains['kiO'] = 0.000
-        self.gains['kpy'] = 0.1
-        self.gains['kiy'] = 0.003 
+        self.gains['kpy'] = 0.2
+        self.gains['kiy'] = 0.00
         omega = -(self.gains['kpO'] * O_error + self.gains['kiO'] * self.O_cum_error)
         # print("omega ==",omega)
         omegafb = self.limit(omega, 'w')
@@ -268,8 +271,8 @@ class SimpleTracker(Node):
         # PI controller for lateral slip error
         # when y actual > y projected, ydot is negative
         y_dot = (self.gains['kpy'] * y_error + self.gains['kiy'] * self.y_cum_error) * (-1 if x_dot > 0 else 1)
-        if y_dot < 0.01 :
-            y_dot = 0.0
+        # if y_dot < 0.01 :
+        #     y_dot = 0.0
         # print("y_dot ==",y_dot)
         # print("x_dot ==",x_dot)
         # Calculate corrective heading from lateral controller and invoke limit
@@ -343,22 +346,21 @@ class SimpleTracker(Node):
             omegafb = self.mparams['velocity']
             headingfb = self.mparams['heading']
             cmd_type = 'spot'
-            y_dot = 0
+            y_dot = 0.0
 
         self.O_cum_error += O_error
         self.y_cum_error += y_error
 
         if self.TESTING:
-            # log = self.get_logger()
+            log = self.get_logger()
             # log.info('    CONTROLLER ', 'ENABLED ' if self.enable else 'DISABLED ', self.ctr)
-            # log.info('    xp: ', xp, 'yp: ', yp, 'Op: ', Op)
-            # log.info('    xa: ', xa, 'ya: ', ya, 'Oa: ', Oa)
+            log.info(f'    xp: {xp}, yp: {yp}, Op: {Op}')
+            log.info(f'    xa: {xa}, ya: {ya}, Oa: {Oa}')
             # # print('    xg: ', data['pose']['rel_goal']['x'], 'yg: ', data['pose']['rel_goal']['y'], 'Og: ', data['pose']['rel_goal']['O'])
-            # log.info('    O_error: ', O_error, 'y_error', y_error)
-            # log.info('    O_cum_error: ', self.O_cum_error, 'y_cum_error', self.y_cum_error)
-            # log.info('    omegafb: ', omegafb, 'headingfb: ', headingfb, 'y_dot: ', y_dot)
-            # log.info('    radiusfb: ', radiusfb, 'anglefb: ', anglefb,
-            #       '    velocityfb: ', velocityfb, 'sidefb: ', sidefb)
+            log.info(f'    O_error: {O_error}, y_error: {y_error}')
+            log.info(f'    O_cum_error: {self.O_cum_error}, y_cum_error: {self.y_cum_error}')
+            log.info(f'    omegafb: {omegafb}, headingfb: {headingfb}, y_dot: {y_dot}')
+            log.info(f'    radiusfb: {radiusfb}, anglefb: {anglefb}, velocityfb: {velocityfb}, sidefb: {sidefb}')
             # # log.info('    Loop Time: ', (Clock().now().seconds - start).to_sec())
             msg = Command()
             msg.id = 0
@@ -370,6 +372,13 @@ class SimpleTracker(Node):
             msg.param_names = ["distance","velocity","side","heading"]
             msg.param_values = [str(radiusfb),str(velocityfb),str(sidefb),str(anglefb)]
             self.y_publisher.publish(msg)
+
+            debug_msg = SimpleStatus()
+            debug_msg.header.stamp = self.get_clock().now().to_msg()
+            debug_msg.param_names = ['xp', 'yp', 'Op', 'xa', 'ya', 'Oa', 'O_error', 'y_error', 'O_cum_error', 'y_cum_error', 'omegafb', 'headingfb', 'y_dot', 'radiusfb', 'anglefb', 'velocityfb', 'sidefb']
+            sidefb_float = 0.0 if sidefb == 'right' else 1.0
+            debug_msg.param_values = [float(xp), float(yp), float(Op), float(xa), float(ya), float(Oa), float(O_error), float(y_error[0]), float(self.O_cum_error), float(self.y_cum_error[0]), float(omegafb), float(headingfb), float(y_dot), float(radiusfb), float(anglefb), float(velocityfb), sidefb_float]
+            self.debug_pub.publish(debug_msg)
 
 def main():
     rclpy.init()
