@@ -208,17 +208,17 @@ def crab_project(radius, angle, velocity, side, icoords):
 
 def model(mtime, mparams):
     def model_handler(t, x, y, O, v):
-        # ocoords_locate = LOCATE[mparams['type']](
-        #     mparams['radius'],
-        #     mparams['heading'],
-        #     mparams['velocity'],
-        #     mparams['side'],
-        #     { 'rover' : { 't' : t }}
-        # )
-        # xd = ocoords_locate['rover']['x']
-        # yd = ocoords_locate['rover']['y']
-        # Od = ocoords_locate['rover']['O']
-        # vd = mparams['velocity']
+        ocoords_locate = LOCATE[mparams['type']](
+            mparams['distance'],
+            mparams['heading'],
+            mparams['velocity'],
+            mparams['side'],
+            { 'rover' : { 't' : t }}
+        )
+        xd = ocoords_locate['rover']['x']
+        yd = ocoords_locate['rover']['y']
+        Od = ocoords_locate['rover']['O']
+        vd = mparams['velocity']
 
         ocoords_project = PROJECT[mparams['type']](
             mparams['distance'],
@@ -231,8 +231,7 @@ def model(mtime, mparams):
         yp = ocoords_project['rover']['y']
         Op = ocoords_project['rover']['O']
 
-        return  xp, yp, Op
-    # print("Hello ROS2")
+        return  xd, yd, Od, vd, xp, yp, Op
     return model_handler
 
 LOCATE = {
