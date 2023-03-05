@@ -210,7 +210,7 @@ def model(mtime, mparams):
     def model_handler(t, x, y, O, v):
         ocoords_locate = LOCATE[mparams['type']](
             mparams['distance'],
-            mparams['heading'],
+            mparams['angle'],
             mparams['velocity'],
             mparams['side'],
             { 'rover' : { 't' : t }}
@@ -222,7 +222,7 @@ def model(mtime, mparams):
 
         ocoords_project = PROJECT[mparams['type']](
             mparams['distance'],
-            mparams['heading'],
+            mparams['angle'],
             mparams['velocity'],
             mparams['side'],
             { 'rover' : { 't' : t, 'x' : x, 'y' : y , 'O': O}}

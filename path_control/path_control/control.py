@@ -63,7 +63,36 @@ class SimpleTracker(Node):
         timer_period = 0.1  # seconds
         self.timer = self.create_timer(timer_period, self.periodic) 
 
-    def vel_to_traj(self,linear_velocity, angular_velocity, heading):
+    # def vel_to_traj(self,linear_velocity, angular_velocity, heading):
+    #     '''
+    #     Derive radius, angle, linear_velocity, and side from 
+    #     linear_velocity, angular_velocity and heading
+    #     '''
+    #     radius_thresh = 0.01
+    #     angular_velocity_thresh = 0.001
+
+    #     if math.fabs(angular_velocity) > angular_velocity_thresh:
+    #         radius = math.fabs(linear_velocity / angular_velocity)
+    #     else:
+    #         radius = __INFINITE_RADIUS__
+
+    #     # check if normal trajectory of point turn
+    #     if radius > radius_thresh:
+    #         side   = ('left' if ((angular_velocity > 0) and (linear_velocity > 0))
+    #                         or ((angular_velocity < 0) and (linear_velocity < 0))
+    #                 else 'right')
+
+    #         angle  = (heading ) if (side == 'left') \
+    #                 else (heading) * -1
+    #         traj_velocity = linear_velocity
+    #     else:
+    #         traj_velocity = angular_velocity
+    #         side = 'left'
+    #         angle = __NULL_ANGLE__
+
+    #     return radius, angle, traj_velocity, side
+
+    def vel_to_traj(linear_velocity, angular_velocity, heading):
         '''
         Derive radius, angle, linear_velocity, and side from 
         linear_velocity, angular_velocity and heading
@@ -81,9 +110,8 @@ class SimpleTracker(Node):
             side   = ('left' if ((angular_velocity > 0) and (linear_velocity > 0))
                             or ((angular_velocity < 0) and (linear_velocity < 0))
                     else 'right')
-
-            angle  = (heading ) if (side == 'left') \
-                    else (heading) * -1
+            angle  = (heading + math.pi/2) if (side == 'left') \
+                    else (heading - math.pi/2) * -1
             traj_velocity = linear_velocity
         else:
             traj_velocity = angular_velocity
@@ -220,10 +248,6 @@ class SimpleTracker(Node):
             self.get_logger().info("In experiment call back, stop")
             self.ACTIVE = True
             self.event = 'STOP'
-            self.o_posx = self.a_posx
-            self.o_posy = self.a_posy
-            self.o_posz  = self.a_posz
-            self.o_yaw  =  self.a_yaw #orientation  #verify orientation
         
             self.mparams = {}
             self.mtime = 0
@@ -234,13 +258,6 @@ class SimpleTracker(Node):
             self.mparams['side'] = 0.0
             self.get_logger().debug(self.mparams)
             self.models = model(self.mtime ,self.mparams)
-
-    def reset(self):
-        if self.ACTIVE:
-            self.update_controller()
-
-        self.O_cum_error = 0
-        self.y_cum_error = 0
 
     def limit(self, value, key):
         return np.clip(value, -self.limits[key], self.limits[key])
@@ -270,7 +287,7 @@ class SimpleTracker(Node):
         return radiusfb, anglefb, velocityfb, sidefb, omegafb, headingfb, y_dot
         
     def periodic(self):
-        if not self.ACTIVE or not self.LOC_READY:
+        if not self.ACTIVE or not self.LOC_READY or self.GOAL_REACHED:
             return
         
         ts = self.get_clock().now().to_msg()
@@ -294,8 +311,12 @@ class SimpleTracker(Node):
 
         # Check if rover reached goal
         self.check_reached_goal(self.mparams, xa, ya, Oa)
+        if self.GOAL_REACHED:
+            return
 
         alpha = self.mparams['heading']
+
+        self.mparams['angle'] = (self.mparams['heading'] + math.pi/2) if (self.mparams['side'] == 'left') else (self.mparams['heading'] - math.pi/2) * -1
         _, _, _, _, xp, yp, Op = model(self.mtime,self.mparams)(t, xa, ya, Oa, va)
         
         crab_rotation = np.array([
@@ -352,7 +373,7 @@ class SimpleTracker(Node):
             msg.targets =["mobility_base"] 
             msg.type = cmd_type
             msg.param_names = ["distance","velocity","side","heading"]
-            msg.param_values = [str(radiusfb),str(velocityfb),str(sidefb),str(anglefb)]
+            msg.param_values = [str(radiusfb),str(velocityfb),str(sidefb),str(headingfb)]
             self.y_publisher.publish(msg)
 
             debug_msg = SimpleStatus()
