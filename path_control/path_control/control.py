@@ -55,6 +55,7 @@ class SimpleTracker(Node):
 
         self.exp_subscription = self.create_subscription(Experiment,'/experiment',self.experiment_callback, 50)
         self.localization_subscription = self.create_subscription(Odometry,'/localization_data' ,self.localization_callback, 50)
+        self.reset_subscriber = self.create_subscription(Bool, '/reset', self.reset_callback, qos_profile=1)
         self.y_publisher = self.create_publisher(Command, '/planner/command', 10)
         self.goal_publisher = self.create_publisher(Bool, '/reached_goal', 10)
         self.debug_pub = self.create_publisher(SimpleStatus, '/tracker/debug', 10)
@@ -101,19 +102,21 @@ class SimpleTracker(Node):
         Og = angles[2]
         eps = 0.0
         if mparams['type'] == "straight":
-            delta = np.sqrt((xg - xc)**2 + (yg - yc)**2)
+            # delta = np.sqrt((xg - xc)**2 + (yg - yc)**2)
+            delta = xg - np.sqrt(xc**2 + yc**2)
             eps = 0.04 # meters
             self.get_logger().info(f"Checking goal reached: delta = {delta}, xc = {xc}, yc = {yc}, xg = {xg}, yg = {yg}")
         elif mparams['type'] == "spot":
-            delta = Og - Oc
+            delta = np.abs(Og - Oc)
             eps = 0.05236 # ~3deg
             self.get_logger().info(f"Checking goal reached: delta = {delta}, Oc = {Oc}, Og = {Og}")
 
-        if np.abs(delta) < eps:
+        if delta < eps:
             goal_msg = Bool()
             goal_msg.data = True
             self.goal_publisher.publish(goal_msg)
             self.GOAL_REACHED = True
+            self.get_logger().info("Sent goal reached message")
 
     def localization_callback(self,msg):
         position = msg.pose.pose.position
@@ -121,14 +124,22 @@ class SimpleTracker(Node):
         quat = [orientation.x, orientation.y, orientation.z, orientation.w]
         roll, pitch, yaw = euler_from_quaternion(quat)
         T = compose_matrix(angles=np.array([roll, pitch, yaw]), translate=np.array([position.x, position.y, position.z]))
-        self.T_c_w = T
+        self.T_c_w = np.copy(T)
 
         if not self.LOC_READY:
-            # On the first reception of an Odometry message, set the origin w.r.t world frame to the
-            # current rover frame
-            self.T_o_w = self.T_c_w
-            self.T_s_w = self.T_o_w
+            # Set the origin w.r.t world frame to the current rover frame
+            self.T_o_w = np.copy(self.T_c_w)
+            self.T_s_w = np.copy(self.T_o_w)
             self.LOC_READY = True
+
+    def reset_callback(self, msg):
+        if msg.data:
+            # Set the origin w.r.t world frame to the current rover frame
+            self.T_o_w = np.copy(self.T_c_w)
+            self.T_s_w = np.copy(self.T_o_w)
+            self.T_g_s = np.eye(4, 4)
+            self.O_cum_error = 0
+            self.y_cum_error = 0
 
     def experiment_callback(self,msg1):
         ts = self.get_clock().now().to_msg()
@@ -139,13 +150,6 @@ class SimpleTracker(Node):
             self.event = 'START'
             self.get_logger().info("In experiment call back, start")
             self.ACTIVE = True
-        
-            self.o_posx = self.a_posx
-            self.o_posy = self.a_posy
-            self.o_posz = self.a_posz
-            self.o_roll  = self.a_roll
-            self.o_pitch  = self.a_pitch
-            self.o_yaw  = self.a_yaw
 
             # Calculate new start transform based previous start frame and relative goal frame
             self.T_s_w = self.T_s_w @ self.T_g_s
@@ -245,10 +249,10 @@ class SimpleTracker(Node):
         # PI controller for orientation drift error
 
         # Find the limits
-        self.gains['kpO'] = 0.1
+        self.gains['kpO'] = 0.25
         self.gains['kiO'] = 0.000
         self.gains['kpy'] = 0.1
-        self.gains['kiy'] = 0.00
+        self.gains['kiy'] = 0.000
         omega = (self.gains['kpO'] * O_error + self.gains['kiO'] * self.O_cum_error)
         omegafb = self.limit(omega, 'w')
        
