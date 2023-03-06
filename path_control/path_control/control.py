@@ -92,7 +92,7 @@ class SimpleTracker(Node):
 
     #     return radius, angle, traj_velocity, side
 
-    def vel_to_traj(linear_velocity, angular_velocity, heading):
+    def vel_to_traj(self, linear_velocity, angular_velocity, heading):
         '''
         Derive radius, angle, linear_velocity, and side from 
         linear_velocity, angular_velocity and heading
@@ -258,6 +258,17 @@ class SimpleTracker(Node):
             self.mparams['side'] = 0.0
             self.get_logger().debug(self.mparams)
             self.models = model(self.mtime ,self.mparams)
+
+            msg = Command()
+            msg.id = 0
+            msg.start = float(0.0)
+            msg.timeout = float(5)
+            msg.event = self.event 
+            msg.targets =["mobility_base"] 
+            msg.type = self.mparams['type']
+            msg.param_names = ["distance","velocity","side","heading"]
+            msg.param_values = [str(0.0),str(self.mparams['velocity']),str(self.mparams['side']),str(self.mparams['heading'])]
+            self.y_publisher.publish(msg)
 
     def limit(self, value, key):
         return np.clip(value, -self.limits[key], self.limits[key])
